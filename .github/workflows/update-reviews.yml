@@ -75,6 +75,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import re
           from pathlib import Path
 
           files = sorted(
@@ -95,23 +96,91 @@ jobs:
 
           reviews = []
 
+          expert_pattern = re.compile(
+              r"^Level\s+\d+\s+Local Expert$",
+              re.IGNORECASE
+          )
+
+          subscribe_pattern = re.compile(
+              r"^Subscribe$",
+              re.IGNORECASE
+          )
+
+          date_pattern = re.compile(
+              r"^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s+\d{4})?$",
+              re.IGNORECASE
+          )
+
           for item in data:
-              author = item.get("author", {})
-              rating = item.get("review_rating", {})
+              author_data = item.get("author", "")
+
+              if isinstance(author_data, list):
+                  author = ""
+                  for value in reversed(author_data):
+                      if isinstance(value, str) and value.strip():
+                          author = value.strip()
+                          break
+              elif isinstance(author_data, str):
+                  author = author_data.strip()
+              else:
+                  author = ""
+
+              rating_data = item.get("review_rating", 0)
+
+              if isinstance(rating_data, list):
+                  rating = 0
+                  for value in rating_data:
+                      try:
+                          rating = int(float(value))
+                          break
+                      except (TypeError, ValueError):
+                          pass
+              else:
+                  try:
+                      rating = int(float(rating_data))
+                  except (TypeError, ValueError):
+                      rating = 0
+
+              raw_text = item.get("review_text", "")
+
+              if not isinstance(raw_text, str):
+                  raw_text = ""
+
+              lines = raw_text.splitlines()
+
+              while lines and not lines[0].strip():
+                  lines.pop(0)
+
+              if lines and author and lines[0].strip() == author:
+                  lines.pop(0)
+
+              while lines:
+                  line = lines[0].strip()
+
+                  if expert_pattern.match(line):
+                      lines.pop(0)
+                      continue
+
+                  if subscribe_pattern.match(line):
+                      lines.pop(0)
+                      continue
+
+                  break
 
               date = ""
-              datetime_data = item.get("datetime", [])
 
-              if isinstance(datetime_data, list):
-                  for dt in datetime_data:
-                      if isinstance(dt, dict) and dt.get("datePublished"):
-                          date = dt["datePublished"]
-                          break
+              if lines and date_pattern.match(lines[0].strip()):
+                  date = lines.pop(0).strip()
+
+              while lines and not lines[0].strip():
+                  lines.pop(0)
+
+              text = "\n".join(lines).strip()
 
               reviews.append({
-                  "text": item.get("review_text", ""),
-                  "author": author.get("name", ""),
-                  "rating": rating.get("ratingValue", 0),
+                  "text": text,
+                  "author": author,
+                  "rating": rating,
                   "date": date
               })
 

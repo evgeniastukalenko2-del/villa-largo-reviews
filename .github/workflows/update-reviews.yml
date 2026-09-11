@@ -70,7 +70,8 @@ jobs:
           cd parser-source
           mkdir -p json
           python run.py --org_id 210582373621 --mode reviews
-                - name: Обновить reviews.json
+
+      - name: Обновить reviews.json
         run: |
           python - <<'PY'
           import json
@@ -88,7 +89,9 @@ jobs:
           source_file = files[0]
           print(f"Берём файл: {source_file}")
 
-          data = json.loads(source_file.read_text(encoding="utf-8"))
+          data = json.loads(
+              source_file.read_text(encoding="utf-8")
+          )
 
           reviews = []
 
@@ -113,13 +116,18 @@ jobs:
               })
 
           Path("reviews.json").write_text(
-              json.dumps(reviews, ensure_ascii=False, indent=2),
+              json.dumps(
+                  reviews,
+                  ensure_ascii=False,
+                  indent=2
+              ),
               encoding="utf-8"
           )
 
           print(f"Сохранено отзывов: {len(reviews)}")
           PY
-                - name: Сохранить reviews.json
+
+      - name: Сохранить reviews.json
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
@@ -128,36 +136,6 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "Изменений в reviews.json нет"
-          else
-            git commit -m "Обновить отзывы"
-            git push
-          fi
-
-      - name: Найти результаты парсера
-        run: |
-          echo "JSON-файлы:"
-          find parser-source -type f -name "*.json" -print
-
-      - name: Проверить результаты
-        run: |
-          COUNT=$(find parser-source -type f -name "*.json" | wc -l)
-
-          if [ "$COUNT" -eq 0 ]; then
-            echo "Парсер не создал JSON"
-            exit 1
-          fi
-
-          echo "Найдено JSON-файлов: $COUNT"
-
-      - name: Сохранить изменения
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          git add reviews.json
-
-          if git diff --cached --quiet; then
-            echo "Новых изменений нет"
           else
             git commit -m "Обновить отзывы"
             git push

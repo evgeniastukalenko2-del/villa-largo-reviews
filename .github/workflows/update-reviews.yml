@@ -96,6 +96,11 @@ jobs:
 
           reviews = []
 
+          date_pattern = re.compile(
+              r"^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s+\d{4})?$",
+              re.IGNORECASE
+          )
+
           expert_pattern = re.compile(
               r"^Level\s+\d+\s+Local Expert$",
               re.IGNORECASE
@@ -106,41 +111,66 @@ jobs:
               re.IGNORECASE
           )
 
-          date_pattern = re.compile(
-              r"^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s+\d{4})?$",
-              re.IGNORECASE
-          )
+          def extract_author(item, lines):
+              author_data = item.get("author")
 
-          for item in data:
-              author_data = item.get("author", "")
+              # Если автор уже строка
+              if isinstance(author_data, str):
+                  value = author_data.strip()
+                  if value:
+                      return value
 
+              # Если автор массив
               if isinstance(author_data, list):
-                  author = ""
                   for value in reversed(author_data):
                       if isinstance(value, str) and value.strip():
-                          author = value.strip()
-                          break
-              elif isinstance(author_data, str):
-                  author = author_data.strip()
-              else:
-                  author = ""
+                          return value.strip()
 
-              rating_data = item.get("review_rating", 0)
+              # Если автор объект
+              if isinstance(author_data, dict):
+                  value = author_data.get("name")
+                  if isinstance(value, str) and value.strip():
+                      return value.strip()
+
+              # Запасной вариант: первая строка review_text
+              if lines:
+                  return lines[0].strip()
+
+              return ""
+
+          def extract_rating(item):
+              rating_data = item.get("review_rating")
+
+              if isinstance(rating_data, (int, float)):
+                  return int(float(rating_data))
+
+              if isinstance(rating_data, str):
+                  try:
+                      return int(float(rating_data))
+                  except ValueError:
+                      pass
 
               if isinstance(rating_data, list):
-                  rating = 0
                   for value in rating_data:
                       try:
                           rating = int(float(value))
-                          break
+                          if 1 <= rating <= 5:
+                              return rating
                       except (TypeError, ValueError):
-                          pass
-              else:
-                  try:
-                      rating = int(float(rating_data))
-                  except (TypeError, ValueError):
-                      rating = 0
+                          continue
 
+              if isinstance(rating_data, dict):
+                  value = rating_data.get("ratingValue")
+                  try:
+                      rating = int(float(value))
+                      if 1 <= rating <= 5:
+                          return rating
+                  except (TypeError, ValueError):
+                      pass
+
+              return 0
+
+          for item in data:
               raw_text = item.get("review_text", "")
 
               if not isinstance(raw_text, str):
@@ -148,34 +178,64 @@ jobs:
 
               lines = raw_text.splitlines()
 
+              # Убираем пустые строки в начале
               while lines and not lines[0].strip():
                   lines.pop(0)
 
+              # Получаем автора
+              author = extract_author(item, lines)
+
+              # Убираем имя автора из review_text
               if lines and author and lines[0].strip() == author:
                   lines.pop(0)
 
-              while lines:
-                  line = lines[0].strip()
+              # Удаляем служебную информацию
+              while lines and not lines[0].strip():
+                  lines.pop(0)
 
-                  if expert_pattern.match(line):
-                      lines.pop(0)
-                      continue
-
-                  if subscribe_pattern.match(line):
-                      lines.pop(0)
-                      continue
-
-                  break
-
-              date = ""
-
-              if lines and date_pattern.match(lines[0].strip()):
-                  date = lines.pop(0).strip()
+              if lines and expert_pattern.match(lines[0].strip()):
+                  lines.pop(0)
 
               while lines and not lines[0].strip():
                   lines.pop(0)
 
-              text = "\n".join(lines).strip()
+              if lines and subscribe_pattern.match(lines[0].strip()):
+                  lines.pop(0)
+
+              while lines and not lines[0].strip():
+                  lines.pop(0)
+
+              # Получаем дату
+              date = ""
+
+              if lines and date_pattern.match(lines[0].strip()):
+                  date = lines[0].strip()
+                  lines.pop(0)
+
+              # Убираем пустые строки после даты
+              while lines and not lines[0].strip():
+                  lines.pop(0)
+
+              # Убираем служебные элементы в конце отзыва
+              cleaned_lines = []
+
+              for line in lines:
+                  stripped = line.strip()
+
+                  if stripped.lower() == "more":
+                      break
+
+                  if stripped.lower() == "show business's response":
+                      break
+
+                  if re.fullmatch(r"\d+", stripped):
+                      continue
+
+                  cleaned_lines.append(line)
+
+              text = "\n".join(cleaned_lines).strip()
+
+              rating = extract_rating(item)
 
               reviews.append({
                   "text": text,

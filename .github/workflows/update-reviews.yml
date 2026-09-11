@@ -68,6 +68,7 @@ jobs:
           FIREFOX_BIN: ${{ steps.firefox.outputs.firefox-path }}
         run: |
           cd parser-source
+          mkdir -p json
           python run.py --org_id 210582373621 --mode reviews
 
       - name: Найти результаты парсера

@@ -22,11 +22,15 @@ jobs:
           python-version: "3.11"
 
       - name: Установить Firefox
+        id: firefox
+        uses: browser-actions/setup-firefox@v1
+        with:
+          firefox-version: latest
+
+      - name: Проверить Firefox
         run: |
-          sudo apt-get update
-          sudo apt-get install -y firefox-esr
-          which firefox
-          firefox --version
+          echo "Firefox: ${{ steps.firefox.outputs.firefox-path }}"
+          "${{ steps.firefox.outputs.firefox-path }}" --version
 
       - name: Скачать парсер
         run: |
@@ -36,64 +40,53 @@ jobs:
         run: |
           pip install -r parser-source/requirements.txt
 
-      - name: Настроить Firefox
+      - name: Настроить Firefox для Selenium
+        env:
+          FIREFOX_BIN: ${{ steps.firefox.outputs.firefox-path }}
         run: |
-          sed -i "/options.page_load_strategy/a\\    options.binary_location = '/usr/bin/firefox'" parser-source/parser/selenium_helper.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("parser-source/parser/selenium_helper.py")
+          text = path.read_text(encoding="utf-8")
+
+          if "import os" not in text:
+              text = "import os\n" + text
+
+          old = "options = Options()"
+          new = "options = Options()\n    options.binary_location = os.environ['FIREFOX_BIN']"
+
+          if "options.binary_location" not in text:
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+          print("Firefox для Selenium настроен")
+          PY
 
       - name: Запустить парсер
+        env:
+          FIREFOX_BIN: ${{ steps.firefox.outputs.firefox-path }}
         run: |
           cd parser-source
           python run.py --org_id 210582373621 --mode reviews
 
-      - name: Найти JSON
+      - name: Найти результаты парсера
         run: |
+          echo "JSON-файлы:"
           find parser-source -type f -name "*.json" -print
 
-      - name: Преобразовать отзывы
+      - name: Проверить результаты
         run: |
-          python -c '
-          import json, glob, os
+          COUNT=$(find parser-source -type f -name "*.json" | wc -l)
 
-          files = glob.glob("parser-source/**/*.json", recursive=True)
-          files = [f for f in files if os.path.basename(f) != "reviews.json"]
+          if [ "$COUNT" -eq 0 ]; then
+            echo "Парсер не создал JSON"
+            exit 1
+          fi
 
-          if not files:
-              raise RuntimeError("JSON с отзывами не найден")
+          echo "Найдено JSON-файлов: $COUNT"
 
-          latest = max(files, key=os.path.getmtime)
-
-          with open(latest, "r", encoding="utf-8") as f:
-              source = json.load(f)
-
-          items = source if isinstance(source, list) else source.get("reviews", [])
-          result = []
-
-          for item in items:
-              author = item.get("author") or {}
-              rating = item.get("review_rating") or {}
-              dates = item.get("datetime") or {}
-
-              author_name = author.get("name", "") if isinstance(author, dict) else str(author)
-              rating_value = rating.get("ratingValue", 0) if isinstance(rating, dict) else rating
-              date_value = dates.get("datePublished", "") if isinstance(dates, dict) else ""
-
-              if isinstance(author_name, list):
-                  author_name = " ".join(map(str, author_name))
-
-              result.append({
-                  "text": item.get("review_text", ""),
-                  "author": author_name,
-                  "rating": rating_value,
-                  "date": date_value
-              })
-
-          with open("reviews.json", "w", encoding="utf-8") as f:
-              json.dump(result, f, ensure_ascii=False, indent=2)
-
-          print("Получено отзывов:", len(result))
-          '
-
-      - name: Сохранить отзывы
+      - name: Сохранить изменения
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"

@@ -9,11 +9,11 @@ permissions:
   contents: write
 
 jobs:
-  update:
+  update-reviews:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -21,11 +21,91 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install Firefox
         run: |
-          pip install requests beautifulsoup4 selenium
+          sudo apt-get update
+          sudo apt-get install -y firefox
 
-      - name: Check repository
+      - name: Install parser dependencies
         run: |
-          ls -la
-          cat reviews.json
+          git clone https://github.com/filippchistiakov/YandexMapsReviewsParser.git parser-source
+          pip install -r parser-source/requirements.txt
+
+      - name: Run Yandex reviews parser
+        run: |
+          cd parser-source
+          python run.py --org_id 210582373621 --mode reviews
+
+      - name: Convert reviews to website format
+        run: |
+          python - <<'PY'
+          import json
+          import glob
+          import os
+
+          files = glob.glob("parser-source/json/*.json")
+
+          if not files:
+              raise RuntimeError("Не найден JSON с отзывами")
+
+          latest = max(files, key=os.path.getmtime)
+
+          with open(latest, "r", encoding="utf-8") as f:
+              source = json.load(f)
+
+          result = []
+
+          for item in source:
+              author = item.get("author") or {}
+              rating = item.get("review_rating") or {}
+              dates = item.get("datetime") or {}
+
+              author_name = ""
+              if isinstance(author, dict):
+                  name_data = author.get("name")
+                  if isinstance(name_data, list):
+                      author_name = name_data[0] if name_data else ""
+                  elif isinstance(name_data, str):
+                      author_name = name_data
+
+              rating_value = 0
+              if isinstance(rating, dict):
+                  value_data = rating.get("ratingValue")
+                  if isinstance(value_data, list):
+                      rating_value = value_data[0] if value_data else 0
+                  else:
+                      rating_value = value_data or 0
+
+              date_value = ""
+              if isinstance(dates, dict):
+                  date_data = dates.get("datePublished")
+                  if isinstance(date_data, list):
+                      date_value = date_data[0] if date_data else ""
+                  elif isinstance(date_data, str):
+                      date_value = date_data
+
+              result.append({
+                  "text": item.get("review_text", ""),
+                  "author": author_name,
+                  "rating": rating_value,
+                  "date": date_value
+              })
+
+          with open("reviews.json", "w", encoding="utf-8") as f:
+              json.dump(result, f, ensure_ascii=False, indent=2)
+
+          print(f"Получено отзывов: {len(result)}")
+          PY
+
+      - name: Save updated reviews
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add reviews.json
+
+          if git diff --cached --quiet; then
+            echo "Изменений нет"
+          else
+            git commit -m "Update Yandex reviews"
+            git push
+          fi

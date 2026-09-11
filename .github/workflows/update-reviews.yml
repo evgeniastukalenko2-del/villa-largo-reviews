@@ -70,6 +70,55 @@ jobs:
           cd parser-source
           mkdir -p json
           python run.py --org_id 210582373621 --mode reviews
+                - name: Обновить reviews.json
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          files = sorted(
+              Path("parser-source/json").glob("210582373621_reviews_*.json"),
+              key=lambda p: p.stat().st_mtime,
+              reverse=True
+          )
+
+          if not files:
+              raise FileNotFoundError("Файл с отзывами не найден")
+
+          source_file = files[0]
+          print(f"Берём файл: {source_file}")
+
+          data = json.loads(source_file.read_text(encoding="utf-8"))
+
+          reviews = []
+
+          for item in data:
+              author = item.get("author", {})
+              rating = item.get("review_rating", {})
+
+              date = ""
+              datetime_data = item.get("datetime", [])
+
+              if isinstance(datetime_data, list):
+                  for dt in datetime_data:
+                      if isinstance(dt, dict) and dt.get("datePublished"):
+                          date = dt["datePublished"]
+                          break
+
+              reviews.append({
+                  "text": item.get("review_text", ""),
+                  "author": author.get("name", ""),
+                  "rating": rating.get("ratingValue", 0),
+                  "date": date
+              })
+
+          Path("reviews.json").write_text(
+              json.dumps(reviews, ensure_ascii=False, indent=2),
+              encoding="utf-8"
+          )
+
+          print(f"Сохранено отзывов: {len(reviews)}")
+          PY
 
       - name: Найти результаты парсера
         run: |

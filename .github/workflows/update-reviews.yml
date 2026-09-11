@@ -119,6 +119,19 @@ jobs:
 
           print(f"Сохранено отзывов: {len(reviews)}")
           PY
+                - name: Сохранить reviews.json
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add reviews.json
+
+          if git diff --cached --quiet; then
+            echo "Изменений в reviews.json нет"
+          else
+            git commit -m "Обновить отзывы"
+            git push
+          fi
 
       - name: Найти результаты парсера
         run: |

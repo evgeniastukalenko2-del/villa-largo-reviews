@@ -36,74 +36,36 @@ jobs:
         run: |
           pip install -r parser-source/requirements.txt
 
-      - name: Настроить Firefox для Selenium
+      - name: Настроить Firefox
         run: |
-          python - <<'PY'
-          from pathlib import Path
+          sed -i "/options.page_load_strategy/a\\    options.binary_location = '/usr/bin/firefox'" parser-source/parser/selenium_helper.py
 
-          path = Path("parser-source/parser/selenium_helper.py")
-          text = path.read_text(encoding="utf-8")
-
-          old = """    options = Options()
-    options.page_load_strategy = 'eager'
-    # options.add_argument("--disable-images")
-    if not debug:
-        options.add_argument("--headless")
-    return webdriver.Firefox(options=options)
-"""
-
-          new = """    options = Options()
-    options.page_load_strategy = 'eager'
-    options.binary_location = '/usr/bin/firefox'
-    # options.add_argument("--disable-images")
-    if not debug:
-        options.add_argument("--headless")
-    return webdriver.Firefox(options=options)
-"""
-
-          if old not in text:
-              raise RuntimeError("Не найден ожидаемый код selenium_helper.py")
-
-          path.write_text(text.replace(old, new), encoding="utf-8")
-          print("Firefox binary location настроен")
-          PY
-
-      - name: Запустить парсер Яндекс Карт
+      - name: Запустить парсер
         run: |
           cd parser-source
           python run.py --org_id 210582373621 --mode reviews
 
-      - name: Найти файл отзывов
+      - name: Найти JSON
         run: |
-          echo "Найденные JSON:"
           find parser-source -type f -name "*.json" -print
 
       - name: Преобразовать отзывы
         run: |
-          python - <<'PY'
-          import json
-          import glob
-          import os
+          python -c '
+          import json, glob, os
 
           files = glob.glob("parser-source/**/*.json", recursive=True)
+          files = [f for f in files if os.path.basename(f) != "reviews.json"]
 
           if not files:
-              raise RuntimeError("Парсер не создал JSON с отзывами")
+              raise RuntimeError("JSON с отзывами не найден")
 
           latest = max(files, key=os.path.getmtime)
-
-          print("Используется файл:", latest)
 
           with open(latest, "r", encoding="utf-8") as f:
               source = json.load(f)
 
-          if isinstance(source, list):
-              items = source
-          elif isinstance(source, dict):
-              items = source.get("reviews", [])
-          else:
-              items = []
-
+          items = source if isinstance(source, list) else source.get("reviews", [])
           result = []
 
           for item in items:
@@ -111,22 +73,12 @@ jobs:
               rating = item.get("review_rating") or {}
               dates = item.get("datetime") or {}
 
-              if isinstance(author, dict):
-                  author_name = author.get("name", "")
-                  if isinstance(author_name, list):
-                      author_name = " ".join(map(str, author_name))
-              else:
-                  author_name = str(author)
+              author_name = author.get("name", "") if isinstance(author, dict) else str(author)
+              rating_value = rating.get("ratingValue", 0) if isinstance(rating, dict) else rating
+              date_value = dates.get("datePublished", "") if isinstance(dates, dict) else ""
 
-              if isinstance(rating, dict):
-                  rating_value = rating.get("ratingValue", 0)
-              else:
-                  rating_value = rating
-
-              if isinstance(dates, dict):
-                  date_value = dates.get("datePublished", "")
-              else:
-                  date_value = ""
+              if isinstance(author_name, list):
+                  author_name = " ".join(map(str, author_name))
 
               result.append({
                   "text": item.get("review_text", ""),
@@ -139,9 +91,9 @@ jobs:
               json.dump(result, f, ensure_ascii=False, indent=2)
 
           print("Получено отзывов:", len(result))
-          PY
+          '
 
-      - name: Сохранить reviews.json
+      - name: Сохранить отзывы
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"

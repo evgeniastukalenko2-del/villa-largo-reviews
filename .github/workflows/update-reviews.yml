@@ -1,4 +1,4 @@
-name: Update Yandex reviews
+name: обновления-отзывы
 
 on:
   workflow_dispatch:
@@ -13,76 +13,120 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Получить репозиторий
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Установить Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Firefox
+      - name: Установить Firefox
         run: |
           sudo apt-get update
-          sudo apt-get install -y firefox
+          sudo apt-get install -y firefox-esr
+          which firefox
+          firefox --version
 
-      - name: Install parser dependencies
+      - name: Скачать парсер
         run: |
           git clone https://github.com/filippchistiakov/YandexMapsReviewsParser.git parser-source
+
+      - name: Установить зависимости
+        run: |
           pip install -r parser-source/requirements.txt
 
-      - name: Run Yandex reviews parser
+      - name: Настроить Firefox для Selenium
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("parser-source/parser/selenium_helper.py")
+          text = path.read_text(encoding="utf-8")
+
+          old = """    options = Options()
+    options.page_load_strategy = 'eager'
+    # options.add_argument("--disable-images")
+    if not debug:
+        options.add_argument("--headless")
+    return webdriver.Firefox(options=options)
+"""
+
+          new = """    options = Options()
+    options.page_load_strategy = 'eager'
+    options.binary_location = '/usr/bin/firefox'
+    # options.add_argument("--disable-images")
+    if not debug:
+        options.add_argument("--headless")
+    return webdriver.Firefox(options=options)
+"""
+
+          if old not in text:
+              raise RuntimeError("Не найден ожидаемый код selenium_helper.py")
+
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          print("Firefox binary location настроен")
+          PY
+
+      - name: Запустить парсер Яндекс Карт
         run: |
           cd parser-source
           python run.py --org_id 210582373621 --mode reviews
 
-      - name: Convert reviews to website format
+      - name: Найти файл отзывов
+        run: |
+          echo "Найденные JSON:"
+          find parser-source -type f -name "*.json" -print
+
+      - name: Преобразовать отзывы
         run: |
           python - <<'PY'
           import json
           import glob
           import os
 
-          files = glob.glob("parser-source/json/*.json")
+          files = glob.glob("parser-source/**/*.json", recursive=True)
 
           if not files:
-              raise RuntimeError("Не найден JSON с отзывами")
+              raise RuntimeError("Парсер не создал JSON с отзывами")
 
           latest = max(files, key=os.path.getmtime)
+
+          print("Используется файл:", latest)
 
           with open(latest, "r", encoding="utf-8") as f:
               source = json.load(f)
 
+          if isinstance(source, list):
+              items = source
+          elif isinstance(source, dict):
+              items = source.get("reviews", [])
+          else:
+              items = []
+
           result = []
 
-          for item in source:
+          for item in items:
               author = item.get("author") or {}
               rating = item.get("review_rating") or {}
               dates = item.get("datetime") or {}
 
-              author_name = ""
               if isinstance(author, dict):
-                  name_data = author.get("name")
-                  if isinstance(name_data, list):
-                      author_name = name_data[0] if name_data else ""
-                  elif isinstance(name_data, str):
-                      author_name = name_data
+                  author_name = author.get("name", "")
+                  if isinstance(author_name, list):
+                      author_name = " ".join(map(str, author_name))
+              else:
+                  author_name = str(author)
 
-              rating_value = 0
               if isinstance(rating, dict):
-                  value_data = rating.get("ratingValue")
-                  if isinstance(value_data, list):
-                      rating_value = value_data[0] if value_data else 0
-                  else:
-                      rating_value = value_data or 0
+                  rating_value = rating.get("ratingValue", 0)
+              else:
+                  rating_value = rating
 
-              date_value = ""
               if isinstance(dates, dict):
-                  date_data = dates.get("datePublished")
-                  if isinstance(date_data, list):
-                      date_value = date_data[0] if date_data else ""
-                  elif isinstance(date_data, str):
-                      date_value = date_data
+                  date_value = dates.get("datePublished", "")
+              else:
+                  date_value = ""
 
               result.append({
                   "text": item.get("review_text", ""),
@@ -94,18 +138,19 @@ jobs:
           with open("reviews.json", "w", encoding="utf-8") as f:
               json.dump(result, f, ensure_ascii=False, indent=2)
 
-          print(f"Получено отзывов: {len(result)}")
+          print("Получено отзывов:", len(result))
           PY
 
-      - name: Save updated reviews
+      - name: Сохранить reviews.json
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+
           git add reviews.json
 
           if git diff --cached --quiet; then
-            echo "Изменений нет"
+            echo "Новых изменений нет"
           else
-            git commit -m "Update Yandex reviews"
+            git commit -m "Обновить отзывы"
             git push
           fi
